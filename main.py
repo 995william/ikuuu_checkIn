@@ -41,7 +41,7 @@ def checkIn(email, passwd, SCKEY):
 if __name__ == '__main__':
     split = os.environ.get('INFO').split(',')
     for user in split:
-        user_split = user.split('#')
+        user_split = user.split('<split>')
         email = user_split[0]
         password = user_split[1]
         sckey = user_split[2]
