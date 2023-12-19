@@ -13,6 +13,7 @@
 |-------| ------------ |-------------------------------------------------------------------|
 | URL   | 是  | 机场地址（例如:https://ikuuu.me）                                         |
 | INFO  | 是  | 账号密码和sk<br/>(用<split>分隔)|
+
 ```INFO例如: xxx@qq.com<split>密码xxx<split>sk,xxx@qq.com<split>密码xxx<split>sk```
 
 3. 到`Actions`中创建一个workflow，运行一次，以后每天项目都会自动运行。
