@@ -35,8 +35,7 @@ jobs:
           pip install -r requirements.txt
       - name: Run sign
         env:
-          SCKEY: ${{ secrets.SCKEY }}
-          EMAIL: ${{ secrets.EMAIL }}
-          PASSWD: ${{ secrets.PASSWD }}
+          URL: ${{ secrets.URL }}
+          INFO: ${{ secrets.INFO }}
         run: |
           python3 ./main.py
