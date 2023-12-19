@@ -66,6 +66,7 @@ class SspanelQd(object):
             session.get(self.base_url, verify=False)
 
             login_url = self.base_url + '/auth/login'
+            logout_url = self.base_url + '/user/logout'
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Safari/537.36',
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -89,6 +90,7 @@ class SspanelQd(object):
 
         info_url = self.base_url + '/user'
         response = session.get(info_url, verify=False)
+        session.get(logout_url)
         """
         以下只适配了editXY主题
         """
@@ -114,6 +116,7 @@ class SspanelQd(object):
                 return msg
             except:
                 return msg
+
 
     def getflow(self, msg):
         pattern = re.compile('获得了(.+)MB')
