@@ -6,6 +6,7 @@ session = requests.session()
 url = os.environ.get('URL')
 login_url = '{}/auth/login'.format(url)
 check_url = '{}/user/checkin'.format(url)
+logout_url = '{}/user/logout'.format(url)
 
 msg_template = 'http://www.pushplus.plus/send?token={}&title=ikuuu签到&content={}'
 
@@ -31,12 +32,14 @@ def checkIn(email, passwd, SCKEY):
             push_url = msg_template.format(SCKEY, content)
             requests.post(url=push_url)
             print('推送成功')
+        session.get(logout_url)
     except:
         content = '签到失败'
         print(content)
         if SCKEY != '':
             push_url = msg_template.format(SCKEY, content)
             requests.post(url=push_url)
+        session.get(logout_url)
 
 if __name__ == '__main__':
     split = os.environ.get('INFO').split(',')
