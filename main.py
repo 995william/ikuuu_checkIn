@@ -20,7 +20,7 @@ def checkIn(email, passwd, SCKEY):
             'passwd': passwd
     }
     try:
-        print('进行登录...')
+        print('账户【'+email+'】进行登录...')
         response = json.loads(session.post(url=login_url,headers=header,data=data).text)
         print(response['msg'])
         # 进行签到
