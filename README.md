@@ -1,19 +1,18 @@
 # ikuuu每日签到
 
-这个脚本只适合这一个机场😥😥😥😥，当时只是自己拿来用，就写个这一个机场的。我又写了一个通用的（机场只要Powered by SSPANEL就可以，），请移步<a href = 'https://github.com/bighammer-link/jichang_checkin'>此处</a>
+通用的（机场只要Powered by SSPANEL就可以) 机场签到
 ## 推送
-  该脚本采用的是server酱的推送方式
+  该脚本采用的是pushplus的推送方式
 
 # 部署过程
  
 1. 右上角Fork此仓库
 2. 然后到`Settings`→`Secrets and variables`→`Actions` 新建以下参数：
 
-| 参数   | 是否必须  | 内容  | 
-| ------------ | ------------ | ------------ |
-| EMAIL  | 是  | 账号邮箱  |
-| PASSWD | 是  | 账号密码  |
-| SCKEY  | 否  | Sever酱秘钥  |
+| 参数    | 是否必须  | 内容                                                                    | 
+|-------| ------------ |-----------------------------------------------------------------------|
+| URL   | 是  | 机场地址（例如:https://ikuuu.me）                                             |
+| INFO  | 是  | 账号密码和sk<br/>(用英文逗号分隔) <br/>例如: xxx@qq.com#密码xxx#sk,xxx@qq.com#密码xxx#sk|
 
 3. 到`Actions`中创建一个workflow，运行一次，以后每天项目都会自动运行。
-4. 最后，可以到Run sign查看签到情况，同时也会也会将签到详情推送到Sever酱。
+4. 最后，可以到Run sign查看签到情况，同时也会也会将签到详情推送到pushplus。
