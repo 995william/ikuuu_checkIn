@@ -1,8 +1,16 @@
 from playwright.sync_api import sync_playwright
 import requests
 import os
+import sys
 import time
 from wxmsg import send_wx
+
+# 保证标准输出支持 UTF-8（防止 Windows 控制台因输出 ✅/❌ 抛出 gbk 编码错误）
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 # 企业微信配置
 corpid = os.environ.get('WX_CORPID') or ''
@@ -59,9 +67,124 @@ def mask_email(email):
 
 
 # ─────────────────────────────
+# 自动获取与探测最新可用域名
+# ─────────────────────────────
+LANDING_PAGES = [
+    'https://ikuuu.win'
+]
+
+FALLBACK_DOMAINS = [
+    'https://ikuuu.top',
+    'https://ikuuu.pw',
+    'https://ikuuu.org',
+    'https://ikuuu.one',
+    'https://ikuuu.dev',
+    'https://ikuuu.co'
+]
+
+def is_valid_login_domain(domain):
+    """检测域名是否为可用且未失效的真实登录地址"""
+    if not domain:
+        return False
+    login_url = f"{domain.rstrip('/')}/auth/login"
+    try:
+        resp = requests.get(
+            login_url,
+            headers={'User-Agent': USER_AGENT},
+            timeout=8,
+            allow_redirects=True
+        )
+        if resp.status_code == 200:
+            text = resp.text
+            # 必须排除“最新域名”导航发布页，且确认含有实际系统的登录标识
+            if ('originBody' in text or 'login' in text.lower()) and '最新域名' not in text:
+                return True
+    except Exception:
+        pass
+    return False
+
+def extract_domains_from_landing_page(landing_url):
+    """使用 Playwright 访问发布页，动态解析最新域名列表"""
+    domains = []
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled']
+            )
+            context = browser.new_context(user_agent=USER_AGENT)
+            page = context.new_page()
+            page.goto(landing_url, wait_until='networkidle', timeout=15000)
+            
+            try:
+                page.wait_for_selector('#domain-list .domain-card', timeout=5000)
+            except Exception:
+                pass
+
+            links = page.eval_on_selector_all(
+                'a[href]', 
+                'elements => elements.map(e => e.href)'
+            )
+            import re
+            for link in links:
+                m = re.search(r'https?://(ikuuu\.[a-z0-9]+)', link)
+                if m:
+                    d = f"https://{m.group(1)}"
+                    if d != landing_url and d not in domains:
+                        domains.append(d)
+            browser.close()
+    except Exception as e:
+        print(f"[发布页解析异常] {landing_url} -> {e}")
+    return domains
+
+def get_target_domain():
+    """获取当前可用的 IKUUU 主域名（支持环境变量优先、发布页解析、备用池和可用性探测）"""
+    # 1. 优先使用用户自定义的环境变量
+    custom_domain = os.environ.get('IKUUU_DOMAIN')
+    if custom_domain:
+        custom_domain = custom_domain.strip().rstrip('/')
+        print(f"[域名解析] 检测到自定义域名环境变量: {custom_domain}")
+        if is_valid_login_domain(custom_domain):
+            print(f"[域名解析] 自定义域名可用性验证通过: {custom_domain}")
+            return custom_domain
+        else:
+            print("[域名解析] 自定义域名无法访问或已失效，转入自动探测...")
+
+    candidates = []
+
+    # 2. 从发布页动态爬取最新域名
+    for landing_page in LANDING_PAGES:
+        print(f"[域名解析] 正在访问官方发布页获取最新域名: {landing_page}")
+        extracted = extract_domains_from_landing_page(landing_page)
+        if extracted:
+            print(f"[域名解析] 从发布页成功提取到域名: {extracted}")
+            candidates.extend(extracted)
+            break
+
+    # 3. 合并内置备用池并去重
+    candidates.extend(FALLBACK_DOMAINS)
+    seen = set()
+    unique_candidates = [d for d in candidates if not (d in seen or seen.add(d))]
+
+    print(f"[域名解析] 待探测候选域名列表: {unique_candidates}")
+
+    # 4. 逐一健康探测
+    for domain in unique_candidates:
+        print(f"[域名解析] 正在探测域名可用性: {domain} ...")
+        if is_valid_login_domain(domain):
+            print(f"[域名解析] 成功选定可用主域名: {domain}")
+            return domain
+
+    # 5. 保底返回
+    fallback = 'https://ikuuu.top'
+    print(f"[域名解析] 所有探测未响应，使用保底域名: {fallback}")
+    return fallback
+
+
+# ─────────────────────────────
 # Playwright 登录获取 Cookie
 # ─────────────────────────────
-def playwright_login(email, passwd):
+def playwright_login(email, passwd, base_url):
 
     safe_email = mask_email(email)
 
@@ -92,8 +215,10 @@ def playwright_login(email, passwd):
         page = context.new_page()
 
         # 打开登录页
+        login_url = f'{base_url}/auth/login'
+        print(f'正在打开登录页: {login_url}')
         page.goto(
-            'https://ikuuu.win/auth/login',
+            login_url,
             wait_until='networkidle'
         )
 
@@ -139,21 +264,22 @@ def playwright_login(email, passwd):
 # ─────────────────────────────
 # 单账号签到
 # ─────────────────────────────
-def checkin_one_account(email, passwd):
+def checkin_one_account(email, passwd, base_url):
 
     safe_email = mask_email(email)
 
-    check_url = 'https://ikuuu.win/user/checkin'
+    check_url = f'{base_url}/user/checkin'
 
     header = {
-        'origin': 'https://ikuuu.win',
+        'origin': base_url,
+        'referer': f'{base_url}/user',
         'user-agent': USER_AGENT
     }
 
     try:
 
         # 登录获取 Cookie
-        pw_cookies = playwright_login(email, passwd)
+        pw_cookies = playwright_login(email, passwd, base_url)
 
         if not pw_cookies:
             raise Exception('未获取到 Cookie')
@@ -204,7 +330,11 @@ def handler(event=None, context=None):
 
     try:
 
-        # 多账号环境变量
+        # 1. 自动获取当前可用目标域名
+        base_url = get_target_domain()
+        print(f"\n当前生效的目标域名: {base_url}")
+
+        # 2. 多账号环境变量
         # 格式：
         # aaa@qq.com:123456
         # bbb@qq.com:abcdef
@@ -242,7 +372,7 @@ def handler(event=None, context=None):
             print(f'开始处理第 {idx} 个账号')
             print('=' * 50)
 
-            result = checkin_one_account(email, passwd)
+            result = checkin_one_account(email, passwd, base_url)
 
             all_result.append(result)
 

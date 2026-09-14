@@ -24,14 +24,15 @@ jobs:
           pip install playwright
           pip install git+https://github.com/qqhsx/my-utils.git
 
-      # 安装 Chromium 浏览器
+      # 安装 Chromium 浏览器及其系统依赖
       - name: Install Playwright Browsers
         run: |
-          playwright install chromium
+          playwright install --with-deps chromium
 
       - name: Run sign-in script
         env:
           ACCOUNTS: ${{ secrets.ACCOUNTS }}
+          IKUUU_DOMAIN: ${{ secrets.IKUUU_DOMAIN }}
           WX_CORPID: ${{ secrets.WX_CORPID }}
           WX_CORPSECRET: ${{ secrets.WX_CORPSECRET }}
           WX_AGENTID: ${{ secrets.WX_AGENTID }}
