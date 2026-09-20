@@ -1,58 +1,103 @@
-### ✅ 第一步：Fork 本仓库
+# IKUUU 机场自动签到服务
 
-打开本项目页面 → 点击右上角 Fork 按钮（复制到你自己的 GitHub 账号下）
+基于 **Playwright** 仿真与 **GitHub Actions** 的全自动 IKUUU 机场签到助手。支持多账号批量签到、动态域名探测、剩余流量与到期天数查询，以及多通道消息推送（企业微信应用、群机器人、PushPlus）。
 
-### ✅ 第二步：设置变量（多账号设置）
+---
 
-回到你的 GitHub 仓库页面 → 点上方 Settings → 左侧 Secrets and variables → Actions→ 点 New repository secret：
-按下面格式填写
+## ✨ 核心特性
 
-Name: 
+- 🌐 **最新可用域名自动探测**：内置官方发布页动态解析与多节点健康探测机制，免除手动维护更迭域名的烦恼。
+- 🛡️ **Playwright 真实浏览器环境**：完全模拟人类操作，消除自动化检测特征，有效避开前端风控与滑动验证拦截。
+- 📊 **账号资产全面统计**：签到后自动查询并推送**剩余流量**、**已用流量**与**账户剩余有效期/到期时间**。
+- 👥 **支持多账号批量签到**：支持配置多个账号按序签到，推送消息自动进行邮箱隐私脱敏。
+- 🔔 **多通道多模版通知**：
+  - **企业微信自建应用**：支持**单变量合并配置**（无需再创建 3 个 Secret）。
+  - **PushPlus 微信推送**：只需一个 Token 即可推送到微信。
+  - **企业微信群机器人**：支持 Webhook 地址直推。
+- ⏰ **云端定时与防休眠**：预设每日定时自动运行，并内置 `.github/workflows/keepalive.yml` 保持 Actions 活跃，避免 GitHub 自动停用工作流。
 
-```
-ACCOUNTS
-```
-Secret:
-```
-aaa@qq.com:123456
-bbb@qq.com:abcdef
-ccc@qq.com:qwerty
-```
-一行一个账号。不要加空格。
+---
 
-### 下面为企业微信消息推送（选填）
+## 🚀 部署步骤
 
-1Name: 
-```
-WX_AGENTID
-```
-Secret:
-```
-填你的企业微信应用ID
-```
-2Name: 
-```
-WX_CORPID
-```
-Secret:
-```
-填你的企业微信ID
-```
-3Name: 
-```
-WX_CORPSECRET
-```
-Secret:
-```
-填你的企业微信应用密钥
+### 第一步：Fork 本仓库
+点击仓库右上角的 **Fork** 按钮，将本项目复制到您自己的 GitHub 账号下。
+
+---
+
+### 第二步：配置 Secrets 环境变量
+
+进入您 Fork 后的仓库页面：
+1. 点击顶部菜单栏的 **Settings**
+2. 在左侧栏点击 **Secrets and variables** → **Actions**
+3. 点击 **New repository secret** 按钮添加以下变量：
+
+#### 1. 必填参数
+
+| 参数名 | 是否必须 | 说明与格式示例 |
+| :--- | :---: | :--- |
+| **`ACCOUNTS`** | **是** | 账号与密码列表，**一行一个**，英文冒号分隔：<br/>`user1@gmail.com:password123`<br/>`user2@qq.com:password456` |
+
+#### 2. 推送配置（按需选择任一或多个）
+
+| 参数名 | 推荐度 | 说明与格式示例 |
+| :--- | :---: | :--- |
+| **`WECHAT_WORK`** | ⭐⭐⭐ 极力推荐 | **企业微信应用合并配置**（单变量即可生效）：<br/>格式：`企业ID,应用Secret,应用AgentId`<br/>示例：`ww1234567890abcdef,abcdefghijklmnopqrstuvwxyz123456,1000002`<br/>*(支持逗号 `,`、分号 `;` 或冒号 `:` 分隔)* |
+| **`PUSHPLUS_TOKEN`** | ⭐⭐⭐ 极力推荐 | **PushPlus 推送 Token**：<br/>前往 [pushplus 官网](https://www.pushplus.plus/) 获取一对一微信推送 Token。 |
+| **`WX_WEBHOOK`** | 可选 | **企业微信群机器人 Webhook 地址**：<br/>直接填入群机器人的完整 Webhook URL。 |
+
+#### 3. 可选高级参数
+
+| 参数名 | 说明 |
+| :--- | :--- |
+| **`IKUUU_DOMAIN`** | 自定义机场主站地址（如 `https://ikuuu.top`）。留空则自动探测最新域名。 |
+
+> [!NOTE]
+> **兼容性说明**：如果您之前分别配置了 `WX_CORPID`、`WX_CORPSECRET`、`WX_AGENTID`，新版代码会自动向下兼容，无需手动修改。建议新用户直接使用单变量 `WECHAT_WORK`。
+
+---
+
+### 第三步：启用并测试运行
+
+1. 进入仓库上方的 **Actions** 标签页。
+2. 首次 Fork 需要点击 **"I understand my workflows, go ahead and enable them"** 启用工作流。
+3. 在左侧任务列表点击 **Auto Sign-in for BBS**。
+4. 点击右侧 **Run workflow** 绿色按钮手动触发一次运行。
+5. 查看运行日志并检查您的微信通知推送。
+
+---
+
+## 📱 推送效果预览
+
+```text
+【IKUUU 机场签到通知】
+════════════════════════════════
+⏰ 签到时间: 2026-09-20 07:15:30
+📊 运行汇总: 共 2 个账号 | ✅ 成功 2 | ❌ 失败 0
+🌐 接入节点: https://ikuuu.top
+────────────────────────────────
+👤 账号 [1]: a******3@gmail.com
+📌 签到状态: ✅ 签到成功 (获得了 150MB 流量)
+📶 剩余流量: 28.50 GB (已用: 11.50 GB / 总计: 40.00 GB)
+⏳ 账户状态: 剩余 35 天 (2026-10-25)
+────────────────────────────────
+👤 账号 [2]: b******9@qq.com
+📌 签到状态: ℹ️ 今日已签到
+📶 剩余流量: 5.20 GB
+⏳ 账户状态: 永久有效
+════════════════════════════════
 ```
 
-### ✅ 第三步：测试运行
+---
 
-点击上方 Actions
+## ⚙️ 定时执行说明
 
-首次 Fork 在 Actions 页面点击 Enable workflows 以启用自动任务。
+- **签到时间**：预设每日 UTC 时间 23:10（即北京时间次日 **07:10**）自动触发。
+- 如需更改签到时间，可在 [.github/workflows/sign_ikuuu.yml](.github/workflows/sign_ikuuu.yml) 中的 `cron: '10 23 * * *'` 进行修改。
 
-选择 Auto Sign-in for BBS
+---
 
-点击右侧 Run workflow → 等待运行完成
+## ⚠️ 免责声明
+
+1. 本项目仅供学习和研究 Python 自动化及 GitHub Actions 使用，请勿用于非法用途。
+2. 请妥善保管个人账号及推送凭据，请勿将账号密码等敏感信息提交至公开代码分支。
