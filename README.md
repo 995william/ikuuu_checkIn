@@ -61,7 +61,7 @@
 
 1. 进入仓库上方的 **Actions** 标签页。
 2. 首次 Fork 需要点击 **"I understand my workflows, go ahead and enable them"** 启用工作流。
-3. 在左侧任务列表点击 **Auto Sign-in for BBS**。
+3. 在左侧任务列表点击 **iKuuu 机场自动签到**。
 4. 点击右侧 **Run workflow** 绿色按钮手动触发一次运行。
 5. 查看运行日志并检查您的微信通知推送。
 

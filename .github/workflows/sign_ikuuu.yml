@@ -1,4 +1,4 @@
-name: Auto Sign-in for BBS
+name: iKuuu 机场自动签到
 
 on:
   schedule:
@@ -8,28 +8,28 @@ on:
 
 jobs:
   sign_in_job:
+    name: 自动签到与消息推送
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - name: 检出代码仓库
+        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: 配置 Python 环境
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: 安装项目依赖
         run: |
           pip install requests
           pip install playwright
 
-      # 安装 Chromium 浏览器及其系统依赖
-      - name: Install Playwright Browsers
+      - name: 安装 Playwright 浏览器及其系统依赖
         run: |
           playwright install --with-deps chromium
 
-      - name: Run sign-in script
+      - name: 执行签到与资产统计推送
         env:
           ACCOUNTS: ${{ secrets.ACCOUNTS }}
           IKUUU_DOMAIN: ${{ secrets.IKUUU_DOMAIN }}

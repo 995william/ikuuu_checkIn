@@ -1,21 +1,22 @@
-name: Keep Repository Alive
+name: 保持仓库活跃 (防休眠)
 
 on:
   schedule:
-    - cron: '0 0 */20 * *'  # 每20天提交一次，可按需调整
-  workflow_dispatch:        # 允许手动运行
+    - cron: '0 0 */20 * *'  # 每 20 天自动触发一次
+  workflow_dispatch:        # 支持手动触发
 
 permissions:
   contents: write  
   
 jobs:
-  keep-alive:
+  keep_alive_job:
+    name: 自动保活心跳
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: 检出代码仓库
         uses: actions/checkout@v4
 
-      - name: Update keep-alive timestamp
+      - name: 更新活跃时间戳并提交
         run: |
           date '+%Y-%m-%d %H:%M:%S' > .keepalive
           git config --global user.name 'github-actions[bot]'
