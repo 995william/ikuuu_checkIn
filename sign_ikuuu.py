@@ -314,7 +314,12 @@ def format_gb(gb_val):
 
 def parse_account_details(rendered_text, html_content=""):
     """
-    从浏览器渲染后的文本与 HTML 中解析出剩余流量与账户有效期
+    从浏览器渲染后的文本与 HTML 中解析出剩余流量、已用流量与账户有效期
+    支持饼图卡片结构提取：
+    - 可用 (如 168.59GB)
+    - 今日已用 (如 3.23GB)
+    - 已用 (如 174.61GB)
+    总流量 = 可用 + 今日已用 + 已用 (所有部分全部加起来)
     """
     info = {
         'traffic_remain': '未知',
@@ -325,39 +330,37 @@ def parse_account_details(rendered_text, html_content=""):
     }
     content = f"{rendered_text}\n{html_content}"
 
-    # 1. 提取剩余流量
-    remain_pats = [
-        r'(?:剩余流量|剩余可用|剩余|未使用)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))',
-        r'([0-9.]+\s*(?:KB|MB|GB|TB))\s*(?:剩余|可用)',
-        r'([0-9.]+\s*(?:KB|MB|GB|TB))\s*/\s*([0-9.]+\s*(?:KB|MB|GB|TB))',
-        r'[\'"]unused_traffic[\'"]\s*:\s*[\'"]?([0-9.]+\s*[KMGT]?B)[\'"]?'
-    ]
-    for pat in remain_pats:
-        m = re.search(pat, content, re.I)
-        if m:
-            info['traffic_remain'] = m.group(1).strip()
-            if len(m.groups()) >= 2 and m.group(2):
-                info['traffic_total'] = m.group(2).strip()
-            break
+    # 1. 提取可用/剩余流量
+    m_remain = re.search(r'(?:可用|剩余流量|剩余可用|剩余|未使用)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
+    if m_remain:
+        info['traffic_remain'] = m_remain.group(1).strip()
 
-    # 辅助提取已用流量与总计流量（优先匹配总已用，避免误取仅限今日的局部流量）
-    m_used = re.search(r'(?:已用流量|总已用)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
-    if not m_used:
-        m_used = re.search(r'(?:今日已用|已用)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
-    if m_used:
-        info['traffic_used'] = m_used.group(1).strip()
+    # 2. 提取今日已用
+    m_today = re.search(r'今日已用[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
+    today_str = m_today.group(1).strip() if m_today else ''
 
-    if not info['traffic_total']:
-        m_total = re.search(r'(?:总计流量|总流量|总计|账户总额度)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
-        if m_total:
-            info['traffic_total'] = m_total.group(1).strip()
+    # 3. 提取非今日的已用流量（饼图中的“已用”或“过去已用”）
+    m_past = re.search(r'(?:过去已用|(?<!今日)已用)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
+    past_str = m_past.group(1).strip() if m_past else ''
 
-    # 若页面未直接标注总流量，但有剩余与已用流量，则自动精准求和
-    if not info['traffic_total'] and info['traffic_remain'] != '未知' and info['traffic_used']:
-        r_gb = parse_traffic_to_gb(info['traffic_remain'])
-        u_gb = parse_traffic_to_gb(info['traffic_used'])
-        if r_gb > 0 or u_gb > 0:
-            info['traffic_total'] = format_gb(r_gb + u_gb)
+    # 计算各分项数值 (GB)
+    remain_gb = parse_traffic_to_gb(info['traffic_remain'])
+    today_gb = parse_traffic_to_gb(today_str)
+    past_gb = parse_traffic_to_gb(past_str)
+
+    # 计算总已用流量与总流量
+    used_total_gb = today_gb + past_gb
+    if used_total_gb > 0:
+        info['traffic_used'] = format_gb(used_total_gb)
+    elif past_gb > 0:
+        info['traffic_used'] = format_gb(past_gb)
+    elif today_gb > 0:
+        info['traffic_used'] = format_gb(today_gb)
+
+    # 总流量 = 可用(剩余) + 今日已用 + 历史已用 (所有部分全部加起来)
+    total_sum_gb = remain_gb + today_gb + past_gb
+    if total_sum_gb > 0:
+        info['traffic_total'] = format_gb(total_sum_gb)
 
     # 2. 提取到期时间与天数
     if re.search(r'(?:永久有效|无限期|长期有效)', content):
@@ -485,6 +488,7 @@ def checkin_one_account(email, passwd, base_url):
     }
 
     record = {
+        'real_email': email.strip(),
         'safe_email': safe_email,
         'success': False,
         'status_text': '未知',
@@ -559,7 +563,11 @@ def checkin_one_account(email, passwd, base_url):
 # ─────────────────────────────────────────────
 # 推送消息模版构建
 # ─────────────────────────────────────────────
-def build_notification_message(records, base_url):
+def build_notification_message(records, base_url, masked=False):
+    """
+    构建通知消息模版
+    :param masked: True 为 GitHub Actions 日志脱敏加密模式，False 为推送到企业微信/PushPlus 的明文真实账号模式
+    """
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     total_count = len(records)
     success_count = sum(1 for r in records if r['success'])
@@ -576,7 +584,8 @@ def build_notification_message(records, base_url):
 
     for idx, r in enumerate(records, 1):
         traffic_display = r['traffic_remain'] + r['traffic_detail']
-        lines.append(f"👤 账号 [{idx}]: {r['safe_email']}")
+        account_name = r['safe_email'] if masked else r['real_email']
+        lines.append(f"👤 账号 [{idx}]: {account_name}")
         lines.append(f"📌 签到状态: {r['status_text']}")
         lines.append(f"📶 剩余流量: {traffic_display}")
         lines.append(f"⏳ 账户状态: {r['expire_status']}")
@@ -619,12 +628,15 @@ def handler(event=None, context=None):
             rec = checkin_one_account(email, passwd, base_url)
             records.append(rec)
 
-        message = build_notification_message(records, base_url)
-        print('\n' + '=' * 20 + ' 推送消息预览 ' + '=' * 20)
-        print(message)
+        # 1. GitHub Actions 日志输出：账号全脱敏加密保护隐私
+        log_message = build_notification_message(records, base_url, masked=True)
+        print('\n' + '=' * 20 + ' Actions 日志预览(已脱敏加密) ' + '=' * 20)
+        print(log_message)
 
+        # 2. 外部通知推送（企业微信/PushPlus）：使用真实明文账号方便识别
+        push_message = build_notification_message(records, base_url, masked=False)
         title = "IKUUU 机场签到通知"
-        dispatch_notifications(title, message)
+        dispatch_notifications(title, push_message)
 
     except Exception as e:
         err_msg = f"签到任务异常中断：{str(e)}"
