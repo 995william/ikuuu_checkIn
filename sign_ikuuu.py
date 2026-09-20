@@ -169,6 +169,7 @@ def mask_email(email):
 # 自动获取与探测最新可用域名
 # ─────────────────────────────────────────────
 LANDING_PAGES = [
+    'https://ikuuu.club',
     'https://ikuuu.win'
 ]
 
@@ -277,6 +278,40 @@ def get_target_domain():
 # ─────────────────────────────────────────────
 # 账户剩余流量与剩余天数文本解析
 # ─────────────────────────────────────────────
+def parse_traffic_to_gb(traffic_str):
+    """将各类流量单位（TB/GB/MB/KB/B）统一转换为 GB 浮点数"""
+    if not traffic_str:
+        return 0.0
+    m = re.search(r'([0-9.]+)\s*([KMGT]?B)', traffic_str, re.I)
+    if not m:
+        return 0.0
+    val = float(m.group(1))
+    unit = m.group(2).upper()
+    if unit == 'TB':
+        return val * 1024
+    elif unit == 'GB':
+        return val
+    elif unit == 'MB':
+        return val / 1024
+    elif unit == 'KB':
+        return val / (1024 * 1024)
+    elif unit == 'B':
+        return val / (1024 * 1024 * 1024)
+    return val
+
+
+def format_gb(gb_val):
+    """将 GB 浮点数格式化为最适可读单位"""
+    if gb_val >= 1024:
+        return f"{gb_val / 1024:.2f} TB"
+    elif gb_val >= 1:
+        return f"{gb_val:.2f} GB"
+    elif gb_val >= 0.001:
+        return f"{gb_val * 1024:.2f} MB"
+    else:
+        return f"{gb_val * 1024 * 1024:.2f} KB"
+
+
 def parse_account_details(rendered_text, html_content=""):
     """
     从浏览器渲染后的文本与 HTML 中解析出剩余流量与账户有效期
@@ -305,15 +340,24 @@ def parse_account_details(rendered_text, html_content=""):
                 info['traffic_total'] = m.group(2).strip()
             break
 
-    # 辅助提取已用流量与总计流量
-    m_used = re.search(r'(?:今日已用|已用流量|已用)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
+    # 辅助提取已用流量与总计流量（优先匹配总已用，避免误取仅限今日的局部流量）
+    m_used = re.search(r'(?:已用流量|总已用)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
+    if not m_used:
+        m_used = re.search(r'(?:今日已用|已用)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
     if m_used:
         info['traffic_used'] = m_used.group(1).strip()
 
     if not info['traffic_total']:
-        m_total = re.search(r'(?:总计|总流量|总计流量)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
+        m_total = re.search(r'(?:总计流量|总流量|总计|账户总额度)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
         if m_total:
             info['traffic_total'] = m_total.group(1).strip()
+
+    # 若页面未直接标注总流量，但有剩余与已用流量，则自动精准求和
+    if not info['traffic_total'] and info['traffic_remain'] != '未知' and info['traffic_used']:
+        r_gb = parse_traffic_to_gb(info['traffic_remain'])
+        u_gb = parse_traffic_to_gb(info['traffic_used'])
+        if r_gb > 0 or u_gb > 0:
+            info['traffic_total'] = format_gb(r_gb + u_gb)
 
     # 2. 提取到期时间与天数
     if re.search(r'(?:永久有效|无限期|长期有效)', content):
@@ -487,8 +531,19 @@ def checkin_one_account(email, passwd, base_url):
 
         # 3. 关联账户流量与有效期数据
         record['traffic_remain'] = user_info['traffic_remain']
-        if user_info['traffic_used'] or user_info['traffic_total']:
-            record['traffic_detail'] = f" (已用: {user_info['traffic_used'] or '未知'} / 总计: {user_info['traffic_total'] or '未知'})"
+        used = user_info.get('traffic_used', '').strip()
+        total = user_info.get('traffic_total', '').strip()
+
+        detail_parts = []
+        if used and used != '未知':
+            detail_parts.append(f"已用: {used}")
+        if total and total != '未知':
+            detail_parts.append(f"总计: {total}")
+
+        if detail_parts:
+            record['traffic_detail'] = f" ({' / '.join(detail_parts)})"
+        else:
+            record['traffic_detail'] = ''
         record['expire_status'] = user_info['expire_status']
 
         print(f"账号 {safe_email} 汇总: {record['status_text']} | 剩余流量: {record['traffic_remain']}{record['traffic_detail']} | 到期: {record['expire_status']}")
