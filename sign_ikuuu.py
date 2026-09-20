@@ -3,8 +3,8 @@
 IKUUU 机场多账号自动签到脚本
 特性：
 1. 自动获取与探测 IKUUU 官方最新可用域名
-2. Playwright 模拟浏览器自动化登录，绕过前端验证风控
-3. 自动签到并查询当前账号剩余流量、已用流量和剩余天数
+2. Playwright 真实浏览器无头自动化登录，绕过前端验证风控
+3. 登录后自动访问用户中心提取渲染后页面，查询剩余流量与剩余天数
 4. 支持多账号批量签到，邮箱自动脱敏处理
 5. 支持企业微信自建应用（合并配置 WECHAT_WORK）、群机器人 Webhook 以及 PushPlus 推送
 6. 结构化精美消息模版通知
@@ -44,14 +44,12 @@ def get_wechat_config():
     """
     raw = os.environ.get('WECHAT_WORK') or os.environ.get('WX_CONFIG')
     if raw:
-        # 支持逗号、分号或冒号作为分隔符
         parts = [p.strip() for p in re.split(r'[,;:]', raw) if p.strip()]
         if len(parts) >= 3:
             return parts[0], parts[1], parts[2]
         elif len(parts) == 2:
             return parts[0], parts[1], ''
 
-    # 回退到旧有的独立环境变量
     corpid = (os.environ.get('WX_CORPID') or '').strip()
     corpsecret = (os.environ.get('WX_CORPSECRET') or '').strip()
     agentid = (os.environ.get('WX_AGENTID') or '').strip()
@@ -67,7 +65,11 @@ def send_wechat_app(msg, corpid, corpsecret, agentid, touser='@all'):
         token_resp = requests.get(token_url, timeout=10).json()
         access_token = token_resp.get('access_token')
         if not access_token:
-            print(f"[企业微信应用通知失败] 获取 access_token 失败: {token_resp}")
+            errcode = token_resp.get('errcode')
+            errmsg = token_resp.get('errmsg', '')
+            print(f"[企业微信应用通知提示] 获取 access_token 响应: {token_resp}")
+            if errcode == 60020:
+                print("💡 提示：企业微信后台开启了【企业可信IP】白名单，GitHub Actions 云端动态IP被拦截。群机器人或 PushPlus 推送不受影响。")
             return False
 
         send_url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={access_token}"
@@ -125,16 +127,16 @@ def send_pushplus(title, content, token):
 
 def dispatch_notifications(title, message):
     """统一派发所有已配置渠道的通知"""
-    # 1. 企业微信应用推送
+    # 1. 企业微信自建应用
     corpid, corpsecret, agentid = get_wechat_config()
     if corpid and corpsecret and agentid:
         print("\n[消息推送] 正在发送企业微信应用通知...")
         send_wechat_app(message, corpid, corpsecret, agentid)
 
-    # 2. 企业微信群机器人推送
+    # 2. 企业微信群机器人
     webhook_url = os.environ.get('WX_WEBHOOK') or ''
     if webhook_url:
-        print("[消息推送] 正在发送企业微信机器人通知...")
+        print("[消息推送] 正在发送企业微信群机器人通知...")
         send_wechat_webhook(message, webhook_url)
 
     # 3. PushPlus 推送
@@ -194,7 +196,6 @@ def is_valid_login_domain(domain):
         )
         if resp.status_code == 200:
             text = resp.text
-            # 必须排除导航发布页，且确认含有实际系统的登录标识
             if ('originBody' in text or 'login' in text.lower()) and '最新域名' not in text:
                 return True
     except Exception:
@@ -238,7 +239,6 @@ def extract_domains_from_landing_page(landing_url):
 
 def get_target_domain():
     """获取当前可用的 IKUUU 主域名（环境变量优先 -> 发布页提取 -> 备用池探测）"""
-    # 1. 自定义域名优先
     custom_domain = os.environ.get('IKUUU_DOMAIN')
     if custom_domain:
         custom_domain = custom_domain.strip().rstrip('/')
@@ -250,8 +250,6 @@ def get_target_domain():
             print("[域名解析] 自定义域名无法访问或已失效，转入自动探测...")
 
     candidates = []
-
-    # 2. 从官方发布页动态爬取
     for landing_page in LANDING_PAGES:
         print(f"[域名解析] 正在访问官方发布页获取最新域名: {landing_page}")
         extracted = extract_domains_from_landing_page(landing_page)
@@ -260,39 +258,28 @@ def get_target_domain():
             candidates.extend(extracted)
             break
 
-    # 3. 合并备用池并去重
     candidates.extend(FALLBACK_DOMAINS)
     seen = set()
     unique_candidates = [d for d in candidates if not (d in seen or seen.add(d))]
     print(f"[域名解析] 待探测候选域名列表: {unique_candidates}")
 
-    # 4. 逐一健康探测
     for domain in unique_candidates:
         print(f"[域名解析] 正在探测域名可用性: {domain} ...")
         if is_valid_login_domain(domain):
             print(f"[域名解析] 成功选定可用主域名: {domain}")
             return domain
 
-    # 5. 保底返回
     fallback = 'https://ikuuu.top'
     print(f"[域名解析] 所有探测未响应，使用保底域名: {fallback}")
     return fallback
 
 
 # ─────────────────────────────────────────────
-# 账户剩余流量与剩余天数解析
+# 账户剩余流量与剩余天数文本解析
 # ─────────────────────────────────────────────
-def get_user_account_info(session, base_url):
+def parse_account_details(rendered_text, html_content=""):
     """
-    通过已登录的 session 请求用户中心页面，解析剩余流量、已用流量与剩余有效期天数
-    返回格式字典:
-    {
-        'traffic_remain': '...',
-        'traffic_used': '...',
-        'traffic_total': '...',
-        'expire_status': '...',
-        'expire_days': int or None
-    }
+    从浏览器渲染后的文本与 HTML 中解析出剩余流量与账户有效期
     """
     info = {
         'traffic_remain': '未知',
@@ -301,93 +288,85 @@ def get_user_account_info(session, base_url):
         'expire_status': '未知',
         'expire_days': None
     }
-    user_url = f"{base_url.rstrip('/')}/user"
+    content = f"{rendered_text}\n{html_content}"
 
-    try:
-        resp = session.get(
-            user_url,
-            headers={
-                'referer': f"{base_url}/auth/login",
-                'user-agent': USER_AGENT
-            },
-            timeout=15
-        )
-        if resp.status_code != 200:
-            return info
+    # 1. 提取剩余流量
+    remain_pats = [
+        r'(?:剩余流量|剩余可用|剩余|未使用)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))',
+        r'([0-9.]+\s*(?:KB|MB|GB|TB))\s*(?:剩余|可用)',
+        r'([0-9.]+\s*(?:KB|MB|GB|TB))\s*/\s*([0-9.]+\s*(?:KB|MB|GB|TB))',
+        r'[\'"]unused_traffic[\'"]\s*:\s*[\'"]?([0-9.]+\s*[KMGT]?B)[\'"]?'
+    ]
+    for pat in remain_pats:
+        m = re.search(pat, content, re.I)
+        if m:
+            info['traffic_remain'] = m.group(1).strip()
+            if len(m.groups()) >= 2 and m.group(2):
+                info['traffic_total'] = m.group(2).strip()
+            break
 
-        html = resp.text
+    # 辅助提取已用流量与总计流量
+    m_used = re.search(r'(?:今日已用|已用流量|已用)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
+    if m_used:
+        info['traffic_used'] = m_used.group(1).strip()
 
-        # 1. 提取剩余流量
-        remain_patterns = [
-            r'(?:剩余流量|剩余可用|剩余|未使用)[^\d<]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))',
-            r'([0-9.]+\s*(?:KB|MB|GB|TB))\s*(?:剩余|可用)',
-            r'id=[\'"](?:unusedTraffic|remainingTraffic)[\'"][^>]*>([^<]+)<',
-            r'class=[\'"][^\'"]*traffic-remain[^\'"]*[\'"][^>]*>([^<]+)<',
-            r'var\s+unusedTraffic\s*=\s*[\'"]([^\'"]+)[\'"]',
-            r'[\'"]unused_traffic[\'"]\s*:\s*[\'"]?([0-9.]+\s*[KMGT]?B)[\'"]?'
-        ]
-        for pat in remain_patterns:
-            m = re.search(pat, html, re.I)
-            if m:
-                info['traffic_remain'] = m.group(1).strip()
-                break
-
-        # 辅助提取已用流量与总流量
-        m_used = re.search(r'(?:今日已用|已用流量|已用)[^\d<]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', html, re.I)
-        if m_used:
-            info['traffic_used'] = m_used.group(1).strip()
-
-        m_total = re.search(r'(?:总计|总流量|总计流量)[^\d<]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', html, re.I)
+    if not info['traffic_total']:
+        m_total = re.search(r'(?:总计|总流量|总计流量)[^\d\n]*[:：\s]*([0-9.]+\s*(?:KB|MB|GB|TB|B))', content, re.I)
         if m_total:
             info['traffic_total'] = m_total.group(1).strip()
 
-        # 2. 提取等级/账号到期时间与天数
-        if re.search(r'(?:永久有效|无限期|长期有效)', html):
-            info['expire_status'] = '永久有效'
-        else:
-            expire_patterns = [
-                r'(?:等级过期时间|账户到期时间|会员到期时间|到期时间|服务到期)[^\d<]*[:：\s]*([0-9]{4}-[0-9]{2}-[0-9]{2}(?:\s+[0-9]{2}:[0-9]{2}(?::[0-9]{2})?)?)',
-                r'class=[\'"][^\'"]*expire[^\'"]*[\'"][^>]*>([0-9]{4}-[0-9]{2}-[0-9]{2}[^<]*)<',
-                r'var\s+class_expire\s*=\s*[\'"]([0-9]{4}-[0-9]{2}-[0-9]{2}[^\'"]*)[\'"]',
-                r'[\'"]class_expire[\'"]\s*:\s*[\'"]([0-9]{4}-[0-9]{2}-[0-9]{2}[^\'"]*)[\'"]'
-            ]
-            for pat in expire_patterns:
-                m = re.search(pat, html, re.I)
-                if m:
-                    expire_str = m.group(1).strip()
-                    try:
-                        date_part = expire_str.split()[0]
-                        exp_date = datetime.strptime(date_part, '%Y-%m-%d').date()
-                        now_date = datetime.now().date()
-                        diff_days = (exp_date - now_date).days
-                        info['expire_days'] = diff_days
-                        if diff_days >= 0:
-                            info['expire_status'] = f"剩余 {diff_days} 天 ({date_part})"
-                        else:
-                            info['expire_status'] = f"已过期 {abs(diff_days)} 天 ({date_part})"
-                    except Exception:
-                        info['expire_status'] = expire_str
-                    break
+    # 2. 提取到期时间与天数
+    if re.search(r'(?:永久有效|无限期|长期有效)', content):
+        info['expire_status'] = '永久有效'
+    else:
+        exp_pats = [
+            r'(?:等级过期时间|账户到期时间|会员到期时间|到期时间|服务到期|有效期至)[^\d\n]*[:：\s]*([0-9]{4}-[0-9]{2}-[0-9]{2}(?:\s+[0-9]{2}:[0-9]{2}(?::[0-9]{2})?)?)',
+            r'([0-9]{4}-[0-9]{2}-[0-9]{2})\s*(?:到期|过期)',
+            r'class_expire[\'":\s]+[\'"]?([0-9]{4}-[0-9]{2}-[0-9]{2}[^\'"]*)[\'"]?'
+        ]
+        for pat in exp_pats:
+            m = re.search(pat, content, re.I)
+            if m:
+                expire_str = m.group(1).strip()
+                try:
+                    date_part = expire_str.split()[0]
+                    exp_date = datetime.strptime(date_part, '%Y-%m-%d').date()
+                    now_date = datetime.now().date()
+                    diff = (exp_date - now_date).days
+                    info['expire_days'] = diff
+                    if diff >= 0:
+                        info['expire_status'] = f"剩余 {diff} 天 ({date_part})"
+                    else:
+                        info['expire_status'] = f"已过期 {abs(diff)} 天 ({date_part})"
+                except Exception:
+                    info['expire_status'] = expire_str
+                break
 
-            if info['expire_status'] == '未知':
-                m_days = re.search(r'(?:距离到期还有|剩余)\s*(\d+)\s*天', html)
-                if m_days:
-                    days = int(m_days.group(1))
-                    info['expire_days'] = days
-                    info['expire_status'] = f"剩余 {days} 天"
-
-    except Exception as e:
-        print(f"[获取账号数据异常] {e}")
+        if info['expire_status'] == '未知':
+            m_days = re.search(r'(?:距离到期还有|剩余)\s*(\d+)\s*天', content)
+            if m_days:
+                days = int(m_days.group(1))
+                info['expire_days'] = days
+                info['expire_status'] = f"剩余 {days} 天"
 
     return info
 
 
 # ─────────────────────────────────────────────
-# Playwright 登录获取 Cookie
+# Playwright 登录并提取渲染后数据与 Cookie
 # ─────────────────────────────────────────────
-def playwright_login(email, passwd, base_url):
+def playwright_login_and_fetch_info(email, passwd, base_url):
     safe_email = mask_email(email)
-    print(f'\n启动浏览器进行登录：{safe_email}')
+    print(f'\n启动浏览器登录并获取数据：{safe_email}')
+
+    user_info = {
+        'traffic_remain': '未知',
+        'traffic_used': '',
+        'traffic_total': '',
+        'expire_status': '未知',
+        'expire_days': None
+    }
+    cookies = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -399,8 +378,6 @@ def playwright_login(email, passwd, base_url):
             viewport={"width": 1280, "height": 800},
             locale="zh-CN"
         )
-
-        # 隐藏自动化 webdriver 特征
         context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
@@ -409,7 +386,7 @@ def playwright_login(email, passwd, base_url):
 
         page = context.new_page()
 
-        # 打开登录页
+        # 1. 打开登录页
         login_url = f'{base_url}/auth/login'
         print(f'正在打开登录页: {login_url}')
         page.goto(login_url, wait_until='networkidle')
@@ -426,25 +403,34 @@ def playwright_login(email, passwd, base_url):
             print('未找到验证按钮，继续登录')
 
         time.sleep(2)
-        print('点击登录按钮...')
+        print('点击登录提交按钮...')
         page.click('button[type="submit"]')
 
-        # 等待页面重定向跳转
+        # 2. 等待登录响应与页面跳转
         time.sleep(5)
-        print('获取登录 Cookie...')
+
+        # 3. 在浏览器内直接访问用户中心 /user 以保证获取完整渲染内容
+        user_url = f"{base_url}/user"
+        print(f'正在访问用户中心页面读取账户信息: {user_url}')
+        try:
+            page.goto(user_url, wait_until='networkidle', timeout=15000)
+            time.sleep(2)
+            rendered_text = page.inner_text('body')
+            html_content = page.content()
+            user_info = parse_account_details(rendered_text, html_content)
+        except Exception as e:
+            print(f"[读取用户中心页面异常] {e}")
+
         cookies = context.cookies()
         browser.close()
-        return cookies
+
+    return cookies, user_info
 
 
 # ─────────────────────────────────────────────
 # 单账号签到与信息汇总
 # ─────────────────────────────────────────────
 def checkin_one_account(email, passwd, base_url):
-    """
-    单账号登录、签到并查询流量与天数
-    返回数据字典包含：email, success, msg, traffic, expire
-    """
     safe_email = mask_email(email)
     check_url = f'{base_url}/user/checkin'
 
@@ -464,10 +450,10 @@ def checkin_one_account(email, passwd, base_url):
     }
 
     try:
-        # 1. Playwright 登录
-        pw_cookies = playwright_login(email, passwd, base_url)
+        # 1. 登录并提取页面资产数据
+        pw_cookies, user_info = playwright_login_and_fetch_info(email, passwd, base_url)
         if not pw_cookies:
-            raise Exception('未获取到 Cookie，可能登录失败或触发图形验证')
+            raise Exception('未获取到 Cookie，可能登录失败或被拦截')
 
         session = requests.session()
         for c in pw_cookies:
@@ -476,7 +462,7 @@ def checkin_one_account(email, passwd, base_url):
             if name and value:
                 session.cookies.set(name, value)
 
-        # 2. 执行签到
+        # 2. 发起签到请求
         print('开始执行签到请求...')
         resp = session.post(url=check_url, headers=header, timeout=20)
         try:
@@ -499,15 +485,13 @@ def checkin_one_account(email, passwd, base_url):
             record['success'] = False
             record['status_text'] = f"⚠️ {msg}"
 
-        # 3. 查询当前账号剩余流量与剩余天数
-        print('正在查询当前账号流量与有效期...')
-        user_info = get_user_account_info(session, base_url)
+        # 3. 关联账户流量与有效期数据
         record['traffic_remain'] = user_info['traffic_remain']
         if user_info['traffic_used'] or user_info['traffic_total']:
             record['traffic_detail'] = f" (已用: {user_info['traffic_used'] or '未知'} / 总计: {user_info['traffic_total'] or '未知'})"
         record['expire_status'] = user_info['expire_status']
 
-        print(f"账号 {safe_email} 状态: {record['status_text']} | 剩余流量: {record['traffic_remain']}{record['traffic_detail']} | 到期: {record['expire_status']}")
+        print(f"账号 {safe_email} 汇总: {record['status_text']} | 剩余流量: {record['traffic_remain']}{record['traffic_detail']} | 到期: {record['expire_status']}")
 
     except Exception as e:
         record['success'] = False
@@ -518,12 +502,9 @@ def checkin_one_account(email, passwd, base_url):
 
 
 # ─────────────────────────────────────────────
-# 重新设计的消息模版构建函数
+# 推送消息模版构建
 # ─────────────────────────────────────────────
 def build_notification_message(records, base_url):
-    """
-    根据所有账号的签到及资产数据，构建层次分明、排版美观的消息卡片
-    """
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     total_count = len(records)
     success_count = sum(1 for r in records if r['success'])
@@ -556,11 +537,9 @@ def build_notification_message(records, base_url):
 # ─────────────────────────────────────────────
 def handler(event=None, context=None):
     try:
-        # 1. 获取当前可用目标域名
         base_url = get_target_domain()
         print(f"\n当前生效的目标域名: {base_url}")
 
-        # 2. 读取账号列表
         accounts_str = os.environ.get('ACCOUNTS')
         if not accounts_str:
             raise Exception('未配置 ACCOUNTS 环境变量，请在 GitHub Secrets 中设置')
@@ -578,7 +557,6 @@ def handler(event=None, context=None):
         print(f'\n共发现 {len(accounts)} 个账号，开始执行签到流程')
 
         records = []
-        # 逐个账号执行签到
         for idx, (email, passwd) in enumerate(accounts, 1):
             print('\n' + '=' * 50)
             print(f'开始处理第 {idx} / {len(accounts)} 个账号')
@@ -586,12 +564,10 @@ def handler(event=None, context=None):
             rec = checkin_one_account(email, passwd, base_url)
             records.append(rec)
 
-        # 3. 生成排版消息
         message = build_notification_message(records, base_url)
         print('\n' + '=' * 20 + ' 推送消息预览 ' + '=' * 20)
         print(message)
 
-        # 4. 派发通知
         title = "IKUUU 机场签到通知"
         dispatch_notifications(title, message)
 
