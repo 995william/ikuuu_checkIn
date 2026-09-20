@@ -535,22 +535,11 @@ def checkin_one_account(email, passwd, base_url):
 
         # 3. 关联账户流量与有效期数据
         record['traffic_remain'] = user_info['traffic_remain']
-        used = user_info.get('traffic_used', '').strip()
-        total = user_info.get('traffic_total', '').strip()
-
-        detail_parts = []
-        if used and used != '未知':
-            detail_parts.append(f"已用: {used}")
-        if total and total != '未知':
-            detail_parts.append(f"总计: {total}")
-
-        if detail_parts:
-            record['traffic_detail'] = f" ({' / '.join(detail_parts)})"
-        else:
-            record['traffic_detail'] = ''
+        record['traffic_used'] = user_info.get('traffic_used', '').strip()
+        record['traffic_total'] = user_info.get('traffic_total', '').strip()
         record['expire_status'] = user_info['expire_status']
 
-        print(f"账号 {safe_email} 汇总: {record['status_text']} | 剩余流量: {record['traffic_remain']}{record['traffic_detail']} | 到期: {record['expire_status']}")
+        print(f"账号 {safe_email} 汇总: {record['status_text']} | 剩余: {record['traffic_remain']} | 已用: {record['traffic_used']} | 总计: {record['traffic_total']} | 到期: {record['expire_status']}")
 
     except Exception as e:
         record['success'] = False
@@ -561,38 +550,60 @@ def checkin_one_account(email, passwd, base_url):
 
 
 # ─────────────────────────────────────────────
-# 推送消息模版构建
+# 推送消息模版构建（专为手机微信端优化）
 # ─────────────────────────────────────────────
+def simplify_status(raw_status):
+    """精炼签到状态文本，避免手机端长句被强行折行"""
+    if '已经签到' in raw_status or '已签到' in raw_status:
+        return '今日已签到'
+    m = re.search(r'获得[^\d]*([0-9.]+\s*[KMGT]?B)', raw_status)
+    if m:
+        return f"签到成功 (+{m.group(1).strip()})"
+    if '成功' in raw_status:
+        return '签到成功'
+    if '失败' in raw_status:
+        return raw_status.replace('❌', '').replace('失败:', '').strip() or '签到失败'
+    return raw_status.strip()
+
+
 def build_notification_message(records, base_url, masked=False):
     """
-    构建通知消息模版
+    专为移动端（手机微信）优化的极简紧凑消息模版：
+    1. 彻底去除长分割线（避免手机窄屏折行断裂）
+    2. 字段扁平垂直展示，短小精悍，保证零折行
+    3. 支持单账号极简与多账号清晰分块
     :param masked: True 为 GitHub Actions 日志脱敏加密模式，False 为推送到企业微信/PushPlus 的明文真实账号模式
     """
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    total_count = len(records)
-    success_count = sum(1 for r in records if r['success'])
-    fail_count = total_count - success_count
+    total = len(records)
 
-    lines = [
-        "【IKUUU 机场签到通知】",
-        "═" * 32,
-        f"⏰ 签到时间: {now_str}",
-        f"📊 运行汇总: 共 {total_count} 个账号 | ✅ 成功 {success_count} | ❌ 失败 {fail_count}",
-        f"🌐 接入节点: {base_url}",
-        "─" * 32,
-    ]
+    lines = ["✈️ iKuuu 签到通知", "──────────────"]
 
     for idx, r in enumerate(records, 1):
-        traffic_display = r['traffic_remain'] + r['traffic_detail']
-        account_name = r['safe_email'] if masked else r['real_email']
-        lines.append(f"👤 账号 [{idx}]: {account_name}")
-        lines.append(f"📌 签到状态: {r['status_text']}")
-        lines.append(f"📶 剩余流量: {traffic_display}")
-        lines.append(f"⏳ 账户状态: {r['expire_status']}")
-        if idx < total_count:
-            lines.append("─" * 32)
+        account = r['safe_email'] if masked else r['real_email']
+        status = simplify_status(r['status_text'])
+        remain = r.get('traffic_remain', '未知')
+        used = r.get('traffic_used', '')
+        total_traffic = r.get('traffic_total', '')
+        expire = r.get('expire_status', '未知')
 
-    lines.append("═" * 32)
+        if total > 1:
+            lines.append(f"【账号 {idx}】{account}")
+        else:
+            lines.append(f"👤 账号: {account}")
+
+        lines.append(f"📌 状态: {status}")
+        lines.append(f"📶 剩余: {remain}")
+        if used and used != '未知':
+            lines.append(f"📊 已用: {used}")
+        if total_traffic and total_traffic != '未知':
+            lines.append(f"📦 总量: {total_traffic}")
+        lines.append(f"⏳ 到期: {expire}")
+
+        if idx < total:
+            lines.append("──────────────")
+
+    lines.append("──────────────")
     return "\n".join(lines)
 
 
