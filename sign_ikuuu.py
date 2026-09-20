@@ -604,6 +604,7 @@ def build_notification_message(records, base_url, masked=False):
             lines.append("──────────────")
 
     lines.append("──────────────")
+    lines.append(f"⏰ {now_str}")
     return "\n".join(lines)
 
 
